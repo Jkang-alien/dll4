@@ -3,6 +3,60 @@ library(RTCGAToolbox)
 library(cgdsr)
 library(Cairo)
 library(ssGSEA4TCGA)
+library(ConsensusClusterPlus)
+library(NMF)
+
+
+###https://www.biostars.org/p/215175/
+
+manifest= "gdc_manifest.2017-03-29T01-21-07.652710.tsv" #Manifest name 
+x=read.table(manifest,header = T)
+
+id= toString(sprintf('"%s"', x$id))
+
+Part1= '{"filters":{"op":"in","content":{"field":"files.file_id","value":[ '
+
+
+Part2= '] }},"format":"TSV","fields":"file_id,file_name,cases.submitter_id,cases.case_id,data_category,data_type,cases.samples.tumor_descriptor,cases.samples.tissue_type,cases.samples.sample_type,cases.samples.submitter_id,cases.samples.sample_id,cases.samples.portions.analytes.aliquots.aliquot_id,cases.samples.portions.analytes.aliquots.submitter_id",
+"size":"1500"} '
+
+Sentence= paste(Part1,id,Part2, collapse=" ") #This creates the search sentence for the command line
+
+
+
+write.table(Sentence,"Payload.txt",quote=F,col.names=F,row.names=F)
+
+###### Go to Linux server and follow the instruction (https://www.biostars.org/p/215175/)
+
+file_metadata <- read.delim('File_metadata.txt')
+
+file_names <- list.dirs(path = "./miRNA_file/", full.names = FALSE, recursive = FALSE)
+
+data_miRNA <- c()
+
+for (i in file_names){
+  path <-  paste('./miRNA_file/', i, '/mirnas.quantification.txt', sep = '')
+  a <- read.delim(path)[,3]
+  data_miRNA <- rbind(data_miRNA, a) 
+  
+}
+
+miRNA_ID <- as.character(read.delim(paste('./miRNA_file/', file_names[1], '/mirnas.quantification.txt', sep = ''))[,1])
+colnames(data_miRNA) <- miRNA_ID
+data_miRNA <-data.frame(file_id = file_names, data_miRNA)
+
+
+
+data <- merge(file_metadata, data_miRNA, by = 'file_id')
+
+
+colnames(data)[1:15]
+data_pt <- subset(data, cases_0_samples_0_sample_type == 'Primary Tumor')
+data_m <- subset(data, cases_0_samples_0_sample_type == 'Metastatic')
+data_n <- subset(data, cases_0_samples_0_sample_type == 'Solid Tissue Normal')
+colnames(data_pt)[1:15]
+data_pt <- data_pt[,c(2, 14:1894)]
+colnames(data_pt)[1] <- 'ID'
 
 #http://www.mirbase.org/cgi-bin/mirna_entry.pl?acc=MI0000088
 rdate <- getFirehoseRunningDates(last = NULL)
@@ -11,14 +65,10 @@ dset <- 'BRCA'
 readData <- getFirehoseData (dataset=dset, runDate=rdate[1], RNAseq2_Gene_Norm=TRUE)
 mRNA <- getData(readData, 'RNASeq2GeneNorm')
 
-readData = getFirehoseData (dataset=dset, runDate=rdate[1], Clinic = FALSE, miRNASeq_Gene=TRUE)
-miRNA <- getData(readData, 'miRNASeqGene')
-
 readData = getFirehoseData (dataset=dset, runDate=rdate[1], Clinic = TRUE)
 clin = getData(readData, "Clinical")
 
 mRNA <- t(mRNA)
-miRNA <- t(miRNA)
 
 ID <- gsub('-...-...-....-..', '', rownames(mRNA))
 index_normal <- grepl('TCGA-..-....-1..-...-....-..', rownames(mRNA))
@@ -40,39 +90,7 @@ sum(duplicated(rownames(mRNA_normal)))
 
 mRNA_normal <- mRNA_normal[duplicated(rownames(mRNA_normal)) == FALSE,]
 
-############ miRNA ###############################
-ID <- gsub('-...-...-....-..', '', rownames(miRNA))
-index_normal <- grepl('TCGA-..-....-1..-...-....-..', rownames(miRNA))
-index_tumor <- grepl('TCGA-..-....-0..-...-....-..', rownames(miRNA))
-miRNA_tumor <- miRNA [index_tumor, ] 
-miRNA_normal <- miRNA [index_normal,]
-
-rownames (miRNA_tumor) <- ID[index_tumor]
-rownames(miRNA_tumor) 
-
-rownames (miRNA_normal) <- ID[index_normal]
-rownames(miRNA_normal) 
-
-sum(duplicated(rownames(miRNA_tumor)))
-
-miRNA_tumor <- miRNA_tumor[duplicated(rownames(miRNA_tumor)) == FALSE,]
-
-sum(duplicated(rownames(miRNA_normal)))
-
-miRNA_normal <- miRNA_normal[duplicated(rownames(miRNA_normal)) == FALSE,]
-
-################################################################################
-
-dll4 <- data.frame(ID = rownames(mRNA_tumor), 
-                   DLL4 = mRNA_tumor[,colnames(mRNA_tumor) == 'DLL4'])
-miR30a <- data.frame(ID = rownames(miRNA_tumor), 
-                     miR_30a = miRNA_tumor[,colnames(miRNA_tumor) == 'hsa-mir-30a'])
-data <- merge(dll4, miR30a, by = 'ID')
-
 ##############################################################
-plot(log(data$miR_30a), log(data$DLL4))
-cor.test(log(data$miR_30a), log(data$DLL4))
-
 
 # Create CGDS object
 mycgds = CGDS("http://www.cbioportal.org/public-portal/")
@@ -98,15 +116,338 @@ ID_lobular <- gsub('-01', '', unlist(strsplit(caselist[10,5], ' ')))
 ID_mixed <- gsub('-01', '', unlist(strsplit(caselist[12,5], ' ')))
 ID_others <- gsub('-01', '', unlist(strsplit(caselist[13,5], ' ')))
 
-subtype <- rep(NA, dim(data)[1])
-subtype [data$ID %in% ID_luminalA] <- 'LuminalA'
-subtype [data$ID %in% ID_basal] <- 'Basal-like'
-subtype [data$ID %in% ID_her2] <- 'HER2'
-subtype [data$ID %in% ID_luminalB] <- 'LuminalB'
-subtype [data$ID %in% ID_lobular] <- 'Lobular'
-subtype [data$ID %in% ID_others] <- 'others'
+subtype <- rep(NA, dim(data_pt)[1])
+subtype [data_pt$ID %in% ID_luminalA] <- 'LuminalA'
+subtype [data_pt$ID %in% ID_basal] <- 'Basal-like'
+subtype [data_pt$ID %in% ID_her2] <- 'HER2'
+subtype [data_pt$ID %in% ID_luminalB] <- 'LuminalB'
+subtype [data_pt$ID %in% ID_lobular] <- 'Lobular'
+subtype [data_pt$ID %in% ID_others] <- 'Others'
 
-data$subtype <- factor(subtype)
+data_pt$subtype <- factor(subtype)
+
+mRNA <- data.frame(ID = rownames(mRNA_tumor), mRNA_tumor)
+
+colnames(data_pt)[grep('\\.30a', colnames(data_pt))]
+grep('\\.30a', colnames(data_pt))
+colnames(data_pt)[grep('\\.214', colnames(data_pt))]
+grep('\\.214', colnames(data_pt))
+df_mir30a_214 <- data_pt[,c(1,297,354,1883)]
+
+grep('\\.34a', colnames(data_pt))
+df_mir34a <- data_pt[,c(1, 500)]
+
+data <- merge(df_mir30a_214, mRNA, by = 'ID')
+summary(data$subtype)
+
+data_la <- subset(data, subtype == 'LuminalA')
+data_lb <- subset(data, subtype == 'LuminalB')
+data_h <- subset(data, subtype == 'HER2')
+data_b <- subset(data, subtype == 'Basal-like')
+############## Basal-like ###############################
+
+
+p_value <- c()
+
+for (i in 5:dim(data_b)[2]){
+  a <- cor.test(data_b[,i], data_b$hsa.mir.214, method = 'spearman')
+  b <- a$p.value
+  p_value <- rbind(p_value, b)
+}
+
+
+#tapply(data[,3], data$group_2, quantile)$A[4]
+
+cor_value <- c()
+for (i in 5:dim(data_b)[2]){
+  a <- cor(data_b[,i], data_b$hsa.mir.214, method = 'spearman')
+  cor_value <- rbind(cor_value, a)
+}
+
+summary(p_value)
+summary(cor_value)
+
+genes <- colnames(data)[5:dim(data)[2]]
+gene_mir214_cor <- genes[abs(cor_value) > 0.4 & is.na(cor_value) == FALSE]
+gene_mir214_inverse_cor <- genes[cor_value < -0.4 & is.na(cor_value) == FALSE]
+
+cor_value <- c()
+for (i in 5:dim(data_la)[2]){
+  a <- cor(data_la[,i], data_la$hsa.mir.214, method = 'spearman')
+  cor_value <- rbind(cor_value, a)
+}
+
+summary(p_value)
+summary(cor_value)
+
+genes <- colnames(data)[5:dim(data)[2]]
+gene_mir214_cor_la <- genes[abs(cor_value) > 0.4 & is.na(cor_value) == FALSE]
+gene_mir214_inverse_cor <- genes[cor_value < -0.4 & is.na(cor_value) == FALSE]
+
+cor_value <- c()
+for (i in 5:dim(data_h)[2]){
+  a <- cor(data_h[,i], data_h$hsa.mir.214, method = 'spearman')
+  cor_value <- rbind(cor_value, a)
+}
+
+summary(p_value)
+summary(cor_value)
+
+genes <- colnames(data)[5:dim(data)[2]]
+gene_mir214_cor_h <- genes[abs(cor_value) > 0.4 & is.na(cor_value) == FALSE]
+gene_mir214_inverse_cor <- genes[cor_value < -0.4 & is.na(cor_value) == FALSE]
+
+
+write.table(gene_mir214_inverse_cor,"genes_mir214_inverse_cor.txt",quote=F,col.names=F,row.names=F)
+
+gene_mir214_positive_cor <- genes[cor_value > 0.4 & is.na(cor_value) == FALSE]
+
+write.table(gene_mir214_positive_cor,"genes_mir214_positive_cor.txt",quote=F,col.names=F,row.names=F)
+
+cairo_pdf(filename = 'mir214_cor.pdf',
+          width = 7, height = 7, pointsize = 12,
+          family = "sans", bg = "white")
+hist(cor_value)
+dev.off()
+
+cairo_pdf(filename = 'mir214_cor_gene.pdf',
+          width = 14, height = 10, pointsize = 20,
+          family = "sans", bg = "white")
+par(mfrow = c(2,3))
+
+plot(log(data_b$hsa.mir.214, base = 10), log(data_b$CXCL12, base = 10),
+     xlab = 'log10 Mir-214',
+     ylab = 'log10 CXCL12')
+
+plot(log(data_b$hsa.mir.214, base = 10), log(data_b$PDGFRB, base = 10),
+     xlab = 'log10 Mir-214',
+     ylab = 'log10 PDGFRB')
+
+plot(log(data_b$hsa.mir.214, base = 10), log(data_b$MMP2, base = 10),
+     xlab = 'log10 Mir-214',
+     ylab = 'log10 MMP2')
+
+plot(log(data_b$hsa.mir.214, base = 10), log(data_b$TIMP2, base = 10),
+     xlab = 'log10 Mir-214',
+     ylab = 'log10 TIMP2')
+
+plot(log(data_b$hsa.mir.214, base = 10), log(data_b$RECK, base = 10),
+     xlab = 'log10 Mir-214',
+     ylab = 'log10 RECK')
+
+plot(log(data_b$hsa.mir.214, base = 10), log(data_b$ERCC3, base = 10),
+     xlab = 'log10 Mir-214',
+     ylab = 'log10 ERCC3')
+
+dev.off()
+
+cairo_pdf(filename = 'mir214_cor_negative_gene.pdf',
+          width = 14, height = 10, pointsize = 20,
+          family = "sans", bg = "white")
+par(mfrow = c(2,3))
+
+
+
+plot(log(data_b$hsa.mir.214, base = 10), log(data_b$PDGFRB, base = 10),
+     xlab = 'log10 Mir-214',
+     ylab = 'log10 PDGFRB')
+
+plot(log(data_b$hsa.mir.214, base = 10), log(data_b$MMP2, base = 10),
+     xlab = 'log10 Mir-214',
+     ylab = 'log10 MMP2')
+
+plot(log(data_b$hsa.mir.214, base = 10), log(data_b$TIMP2, base = 10),
+     xlab = 'log10 Mir-214',
+     ylab = 'log10 TIMP2')
+
+plot(log(data_b$hsa.mir.214, base = 10), log(data_b$RECK, base = 10),
+     xlab = 'log10 Mir-214',
+     ylab = 'log10 RECK')
+dev.off()
+
+cairo_pdf(filename = 'mir214_PTEN.pdf',
+          width = 7, height = 7, pointsize = 12,
+          family = "sans", bg = "white")
+plot(log(data_b$hsa.mir.214, base = 10), log(data_b$PTEN, base = 10),
+     xlab = 'log10 Mir-214',
+     ylab = 'log10 PTEN')
+text (2.5, 2.5, 'cor = 0.07')
+dev.off()
+
+cor_value [genes == 'PTEN']
+
+############## Luminal A ###############################################
+p_value <- c()
+
+for (i in 5:dim(data_la)[2]){
+  a <- cor.test(data_la[,i], data_la$hsa.mir.214, method = 'spearman')
+  b <- a$p.value
+  p_value <- rbind(p_value, b)
+}
+
+
+#tapply(data[,3], data$group_2, quantile)$A[4]
+
+cor_value <- c()
+for (i in 5:dim(data_la)[2]){
+  a <- cor(data_la[,i], data_la$hsa.mir.214, method = 'spearman')
+  cor_value <- rbind(cor_value, a)
+}
+
+summary(p_value)
+summary(cor_value)
+
+genes <- colnames(data)[5:dim(data)[2]]
+
+gene_mir214_inverse_cor <- genes[cor_value < -0.2 & is.na(cor_value) == FALSE]
+
+write.table(gene_mir214_inverse_cor,"genes_mir214_inverse_cor_la.txt",quote=F,col.names=F,row.names=F)
+
+gene_mir214_positive_cor <- genes[cor_value > 0.4 & is.na(cor_value) == FALSE]
+
+write.table(gene_mir214_positive_cor,"genes_mir214_positive_cor_la.txt",quote=F,col.names=F,row.names=F)
+
+cairo_pdf(filename = 'mir214_cor_la.pdf',
+          width = 7, height = 7, pointsize = 12,
+          family = "sans", bg = "white")
+hist(cor_value)
+dev.off()
+
+cairo_pdf(filename = 'mir214_cor_gene_la.pdf',
+          width = 14, height = 10, pointsize = 20,
+          family = "sans", bg = "white")
+par(mfrow = c(2,3))
+
+plot(log(data_la$hsa.mir.214, base = 10), log(data_la$CXCL12, base = 10),
+     xlab = 'log10 Mir-214',
+     ylab = 'log10 CXCL12')
+
+plot(log(data_la$hsa.mir.214, base = 10), log(data_la$PDGFRB, base = 10),
+     xlab = 'log10 Mir-214',
+     ylab = 'log10 PDGFRB')
+
+plot(log(data_la$hsa.mir.214, base = 10), log(data_la$MMP2, base = 10),
+     xlab = 'log10 Mir-214',
+     ylab = 'log10 MMP2')
+
+plot(log(data_la$hsa.mir.214, base = 10), log(data_la$TIMP2, base = 10),
+     xlab = 'log10 Mir-214',
+     ylab = 'log10 TIMP2')
+
+plot(log(data_la$hsa.mir.214, base = 10), log(data_la$RECK, base = 10),
+     xlab = 'log10 Mir-214',
+     ylab = 'log10 RECK')
+
+plot(log(data_la$hsa.mir.214, base = 10), log(data_la$ERCC3, base = 10),
+     xlab = 'log10 Mir-214',
+     ylab = 'log10 ERCC3')
+
+dev.off()
+
+cairo_pdf(filename = 'mir214_cor_negative_gene_la.pdf',
+          width = 14, height = 10, pointsize = 20,
+          family = "sans", bg = "white")
+par(mfrow = c(2,3))
+
+
+
+plot(log(data_la$hsa.mir.214, base = 10), log(data_la$PDGFRB, base = 10),
+     xlab = 'log10 Mir-214',
+     ylab = 'log10 PDGFRB')
+
+plot(log(data_la$hsa.mir.214, base = 10), log(data_la$MMP2, base = 10),
+     xlab = 'log10 Mir-214',
+     ylab = 'log10 MMP2')
+
+plot(log(data_la$hsa.mir.214, base = 10), log(data_la$TIMP2, base = 10),
+     xlab = 'log10 Mir-214',
+     ylab = 'log10 TIMP2')
+
+plot(log(data_la$hsa.mir.214, base = 10), log(data_la$RECK, base = 10),
+     xlab = 'log10 Mir-214',
+     ylab = 'log10 RECK')
+dev.off()
+
+cairo_pdf(filename = 'mir214_PTEN_la.pdf',
+          width = 7, height = 7, pointsize = 12,
+          family = "sans", bg = "white")
+plot(log(data_la$hsa.mir.214, base = 10), log(data_la$PTEN, base = 10),
+     xlab = 'log10 Mir-214',
+     ylab = 'log10 PTEN')
+text (2.5, 2.5, 'cor = 0.07')
+dev.off()
+
+
+########################################################
+########### Mir-30a, DLL3 ##############################
+
+CairoPNG(filename = "mir30_DLL3_cor.png", width = 1200, height = 1200,
+         pointsize = 24, bg = "white")
+
+par(mfrow = c(2,2))
+
+cor(log(data_b$hsa.mir.30a, base = 10) , log(data_b$DLL4, base = 10))
+cor.test(log(data_b$hsa.mir.30a, base = 10) , log(data_b$DLL4, base = 10))
+plot(log(data_b$hsa.mir.30a, base = 10) , log(data_b$DLL4, base = 10),
+     xlab = 'Mir-30a expression (log-scale)',
+     ylab = 'DLL4 expression (log-scale)',
+     main = 'Basal-like')
+legend('bottomleft', 'cor = -0.24, P = 0.018', bty = 'n')
+abline(lm(log(data_b$DLL4, base = 10) ~ log(data_b$hsa.mir.30a, base = 10)))
+
+
+cor(log(data_la$hsa.mir.30a, base = 10) , log(data_la$DLL4, base = 10))
+cor.test(log(data_la$hsa.mir.30a, base = 10) , log(data_la$DLL4, base = 10))
+plot(log(data_la$hsa.mir.30a, base = 10) , log(data_la$DLL4, base = 10),
+     xlab = 'Mir-30a expression (log-scale)',
+     ylab = 'DLL4 expression (log-scale)',
+     main = 'Luminal A')
+legend('bottomleft', 'cor = -0.007, P = 0.927', bty = 'n')
+abline(lm(log(data_la$DLL4, base = 10) ~ log(data_la$hsa.mir.30a, base = 10)))
+
+cor(log(data_lb$hsa.mir.30a, base = 10) , log(data_lb$DLL4, base = 10))
+cor.test(log(data_lb$hsa.mir.30a, base = 10) , log(data_lb$DLL4, base = 10))
+plot(log(data_lb$hsa.mir.30a, base = 10) , log(data_lb$DLL4, base = 10),
+     xlab = 'Mir-30a expression (log-scale)',
+     ylab = 'DLL4 expression (log-scale)',
+     main = 'Luminal B')
+legend('bottomleft', 'cor = -0.116, P = 0.235', bty = 'n')
+abline(lm(log(data_lb$DLL4, base = 10) ~ log(data_lb$hsa.mir.30a, base = 10)))
+
+cor(log(data_h$hsa.mir.30a, base = 10) , log(data_h$DLL4, base = 10))
+cor.test(log(data_h$hsa.mir.30a, base = 10) , log(data_h$DLL4, base = 10))
+plot(log(data_h$hsa.mir.30a, base = 10) , log(data_h$DLL4, base = 10),
+     xlab = 'Mir-30a expression (log-scale)',
+     ylab = 'DLL4 expression (log-scale)',
+     main = 'HER2')
+legend('bottomleft', 'cor = -0.004, P = 0.978', bty = 'n')
+abline(lm(log(data_h$DLL4, base = 10) ~ log(data_h$hsa.mir.30a, base = 10)))
+
+dev.off()
+
+cor(log(data_la$hsa.mir.30a, base = 10) , log(data_la$DLL4, base = 10))
+plot(log(data_la$hsa.mir.30a, base = 10) , log(data_la$DLL4, base = 10))
+
+
+cor_value [genes == 'PTEN']
+
+loc <- matrix( c(cor_value[abs(cor_value) > 0.5 & p_value < 0.05], 
+                 -log(p_value, base =10)[abs(cor_value) > 0.5 & p_value <0.05]), 
+               nrow = 2,
+               byrow = TRUE)
+
+colnames(loc)
+svg(file = 'volcano_214.svg',
+    width =7.5, height = 7.5, pointsize = 16)                
+vp <- plot(cor_value, -log(p_value, base = 10),
+           xlab = 'Difference of mRNA expression',
+           ylab = '-Log10(p-value)')
+text(loc[1,], loc[2,], colnames(loc), adj = c(0,0.5),
+     cex =0.5)
+#arrows(0.3, 4, 0.4, 3.25, angle = 30, length = 0.05)
+dev.off()
+
+
 
 cairo_pdf(filename = 'DLL4_miR30a_expression.pdf',
           width = 7, height = 7, pointsize = 12,
@@ -250,7 +591,7 @@ dev.off()
 CairoPDF(file = "Histogram.pdf",  width = 5, height = 5, 
          onefile = TRUE, bg = "transparent",
          pointsize = 12)
-hist(data_basal$miR_30a, breaks = 100)
+hist(data_laasal$miR_30a, breaks = 100)
 dev.off()
 
 CairoPDF(file = "miR30a_stage.pdf",  width = 5, height = 5, 
@@ -312,3 +653,97 @@ Sentence= paste(Part1,id,Part2, collapse=" ") #This creates the search sentence 
 
 
 write.table(Sentence,"Payload.txt",quote=F,col.names=F,row.names=F)
+file_metadata <- read.delim('File_metadata.txt')
+
+
+gene_list <- c('EZH2', 'PTEN', 'MAP2K3', 'MAPK8', 'PLXNB1', 'POU4F2', 'SRGAP1', 'XBP1',
+               'TWIST1', 'CTNNB1', 'BCL2L2', 'BCL2L11', 'JAG1', 'FGFR1', 'NRAS', 'UBE2I', 
+               'HDGF', 'CDK6', 'ALPK2', 'PAPPA', 'LZTS1', 'CPEB4', 'TNFSF9', 'TFAP2A', 
+               'ING4', 'LTF', 'TP53', 'MEF2C', 'STAT6')
+
+gene_list [gene_list %in% colnames(data_b)]
+par(new=F)
+CairoPDF(file = 'gene_list.pdf',
+         width =20, height = 16, pointsize = 10)
+par(mfrow = c(5,6))
+for (i in gene_list){
+  hist(data_b[,i],
+       xlab = i)
+} 
+
+dev.off()
+
+hist(log(data_b$hsa.mir.214))
+boxplot(log(data_b$hsa.mir.214) ~ data_b$TP53>1000)
+
+cor_value_gene_list <- c()
+for (i in gene_list){
+  a <- cor(log(data_b[,i]), log(data_b$hsa.mir.214), method = 'pearson')
+  cor_value_gene_list <- rbind(cor_value_gene_list, a)
+}
+hist(cor_value_gene_list,
+     main = 'Mir214 and selected gene expression',
+     xlab = 'Correlation coefficient')
+gene_list [abs(cor_value_gene_list) > 0.3 ]
+
+CairoPDF(file = 'gene_list_cor.pdf',
+         width =10, height = 6, pointsize = 16)
+par(mfrow = c(1,2))
+plot(log(data_b$hsa.mir.214),log(data_b$ALPK2))
+plot(log(data_b$hsa.mir.214), log(data_b$MEF2C))
+
+dev.off()
+
+
+gs <- gs_gmt('h.all.v6.0.symbols.gmt')
+
+mRNA <- t(data_b[,5:dim(data_b)[2]])
+es <- gsva(mRNA, gs, method = 'ssgsea', rnaseq = TRUE )
+ 
+data_t <- scale(t(es), center = TRUE, scale = TRUE)
+colnames(data_t) <- gsub('http://www.broadinstitute.org/gsea/msigdb/cards/HALLMARK_', '', colnames(data_t))
+
+results_col = ConsensusClusterPlus(data_t,maxK=6,reps=5000,pItem=0.8,pFeature=1,
+                                   title='consensus_col',
+                                   clusterAlg="hc",
+                                   innerLinkage = "ward.D2",
+                                   finalLinkage = "ward.D2",
+                                   distance="euclidean",
+                                   plot="pdf")
+
+results_row = ConsensusClusterPlus(t(data_t),maxK=6,reps=5000,pItem=0.8,pFeature=1,
+                                   title='consensus_row',
+                                   clusterAlg="hc",
+                                   innerLinkage = "ward.D2",
+                                   finalLinkage = "ward.D2",
+                                   distance="euclidean",
+                                   plot="pdf")
+
+ann_col <- data.frame(immune_class = factor(results_col[[4]]$consensusClass))
+ann <- data.frame(class = as.factor( results_row[[2]]$consensusClass))
+rownames(ann) <- gsub('-', '\\.', gsub('-...-...-....-..','',rownames(ann)))
+
+
+ann$mir214 <- log(data_b$hsa.mir.214)
+
+CairoPDF(file = 'cluster.pdf',
+         width =7.5, height = 7.5, pointsize = 16)
+aheatmap(data_t,
+         hclustfun=function(d) hclust(dist(d, method = 'euclidean'), method = "ward.D2"),
+         annRow = ann,
+         annCol = ann_col,
+         Colv = results_col[[4]]$consensusTree,
+         Rowv = results_row[[2]]$consensusTree,
+         labRow = rep('',dim(data_t)[1]))
+
+
+dev.off()
+
+cor_value_gene_set <- c()
+for (i in 1:dim(data_t)[2]){
+  a <- cor(data_t[,i], data_b$hsa.mir.214, method = 'spearman')
+  cor_value_gene_set <- rbind(cor_value_gene_set, a)
+}
+
+hist(cor_value_gene_set)
+colnames(data_t)[abs(cor_value_gene_set)>.4]
